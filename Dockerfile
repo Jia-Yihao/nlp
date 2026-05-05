@@ -16,5 +16,5 @@ COPY . .
 
 RUN chmod +x predict.py
 
-# 🔥 关键修改：不在ENTRYPOINT写死参数，让TIRA自己传参
+# 注意：这里不能加任何参数，让 TIRA 在运行时传递
 ENTRYPOINT ["python", "-u", "predict.py"]
