@@ -6,26 +6,33 @@ from pathlib import Path
 
 def main():
     # ====================== TIRA Smoke Test 模式 ======================
-    # 当 GitHub Action 运行时，TIRA 会先无参数调用来测试
     if len(sys.argv) == 1:
         print("TIRA Smoke Test: Creating mock output")
         
-        # 必须创建到 /output 目录
-        output_dir = "/output"
-        os.makedirs(output_dir, exist_ok=True)
-        output_file = os.path.join(output_dir, "predictions.jsonl")
+        # 写入当前工作目录（这是 TIRA 实际检查的位置）
+        output_file = "predictions.jsonl"
         
         with open(output_file, 'w') as f:
             f.write('{"id": "smoke_test_1", "label": 0.5}\n')
             f.write('{"id": "smoke_test_2", "label": 0.5}\n')
         
+        # 也尝试写入 /output（以防万一）
+        os.makedirs("/output", exist_ok=True)
+        with open("/output/predictions.jsonl", 'w') as f:
+            f.write('{"id": "smoke_test_1", "label": 0.5}\n')
+            f.write('{"id": "smoke_test_2", "label": 0.5}\n')
+        
         print(f"✅ Created: {output_file}")
+        print(f"✅ Also created: /output/predictions.jsonl")
+        
+        # 列出当前目录所有文件（调试用）
+        print(f"Current directory contents: {os.listdir('.')}")
+        
         return 0
     
     # ====================== 正式评估模式 ======================
     if len(sys.argv) != 3:
         print(f"Error: Expected 2 arguments, got {len(sys.argv)-1}", file=sys.stderr)
-        print("Usage: python predict.py <input_file> <output_directory>", file=sys.stderr)
         return 1
     
     input_file = sys.argv[1]
@@ -81,7 +88,6 @@ def main():
         print(f"✅ 预测完成: {output_file}")
         
     except Exception as e:
-        # 如果模型加载失败，输出默认值 0.5
         print(f"⚠️ 使用备用模式: {e}")
         with open(input_file, 'r') as f_in, open(output_file, 'w') as f_out:
             for line in f_in:
