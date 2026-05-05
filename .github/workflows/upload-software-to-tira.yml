@@ -6,7 +6,7 @@ on:
       directory:
         description: 'The directory that contains the submission. Can be . for the root of the repository'
         required: true
-        default: .
+        default: '.'
 
 jobs:
   docker-build:
@@ -27,45 +27,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install huggingface_hub tira
 
-      - name: Download model from Hugging Face (outside repo)
+      - name: Download model from Hugging Face (into ./model)
         run: |
+          # Remove existing model directory if present (e.g., leftover config files)
+          rm -rf ./model
           python -c "
           from huggingface_hub import snapshot_download
           snapshot_download(
               repo_id='Yihao-Jia/eist',
-              local_dir='/tmp/hf_model',
+              local_dir='./model',
               local_dir_use_symlinks=False
           )
           "
-          ls -lh /tmp/hf_model/model.safetensors
+          # Verify model file size
+          ls -lh ./model/model.safetensors
+          file ./model/model.safetensors
 
-      - name: Prepare clean submission directory
-        run: |
-          rm -rf /tmp/submission
-          mkdir -p /tmp/submission
-
-          # Copy all repository files (excluding .git)
-          rsync -av --exclude='.git' ./ /tmp/submission/
-
-          # Inject the downloaded model
-          rm -rf /tmp/submission/model
-          cp -r /tmp/hf_model /tmp/submission/model
-
-          cd /tmp/submission
-          git init
-          git config user.email "tira@ci.local"
-          git config user.name "tira-ci"
-          git add .
-          git commit -m "submission with model"
-
-          echo "=== Submission summary ==="
-          ls -lh /tmp/submission/model/model.safetensors
-
-      - name: Build and upload to TIRA
+      - name: Build, test, and upload image
         run: |
           tira-cli login --token ${{ secrets.TIRA_CLIENT_TOKEN }}
           tira-cli verify-installation --task generative-ai-authorship-verification-panclef-2026 --team Yi_hao || true
           tira-cli code-submission \
-            --path /tmp/submission \
+            --path ${{ inputs.directory }} \
             --task generative-ai-authorship-verification-panclef-2026 \
             --dataset pan26-generative-ai-detection-smoke-test-20260330-training
