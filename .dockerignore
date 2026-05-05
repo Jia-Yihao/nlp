@@ -1,1 +1,9 @@
-
+.git
+.gitattributes
+.github
+__pycache__
+*.pyc
+*.md
+*.ipynb
+*.sh
+.DS_Store
