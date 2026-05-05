@@ -253,7 +253,14 @@ def main():
         return smoke_test_predict()
 
     print(f"[MAIN] Run mode: input={input_file}, output={output_dir}")
-
+    
+    model_dir = Path(__file__).parent / "model"
+    print("[CHECK] model_dir =", model_dir)
+    print("[CHECK] model_dir exists =", model_dir.exists())
+    print("[CHECK] model_dir files =", os.listdir(model_dir))
+    print("[CHECK] safetensors exists =", (model_dir / "model.safetensors").exists())
+    print("[CHECK] safetensors size =", (model_dir / "model.safetensors").stat().st_size)
+   
     if not os.path.exists(input_file):
         print(f"⚠️ Input file not found: {input_file}, writing placeholder.")
         out_file = Path(output_dir) / "predictions.jsonl"
