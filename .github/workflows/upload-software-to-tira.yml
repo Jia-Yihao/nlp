@@ -14,8 +14,10 @@ jobs:
     timeout-minutes: 1024
 
     steps:
-      - name: Checkout
+      - name: Checkout original repository
         uses: actions/checkout@v4
+        with:
+          path: original_repo
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -27,27 +29,51 @@ jobs:
           python -m pip install --upgrade pip
           pip install huggingface_hub tira
 
-      - name: Download model from Hugging Face (into ./model)
+      - name: Download model from Hugging Face
         run: |
-          # Remove existing model directory if present (e.g., leftover config files)
-          rm -rf ./model
+          mkdir -p /tmp/hf_model
           python -c "
           from huggingface_hub import snapshot_download
           snapshot_download(
               repo_id='Yihao-Jia/eist',
-              local_dir='./model',
+              local_dir='/tmp/hf_model',
               local_dir_use_symlinks=False
           )
           "
-          # Verify model file size
-          ls -lh ./model/model.safetensors
-          file ./model/model.safetensors
+          ls -lh /tmp/hf_model/model.safetensors
+
+      - name: Prepare clean submission repository
+        run: |
+          # Clone original repo to a new directory (preserves remotes)
+          git clone --depth=1 original_repo /tmp/submission
+          cd /tmp/submission
+
+          # Remove any existing model directory
+          rm -rf model
+          # Copy downloaded model into the repo
+          cp -r /tmp/hf_model ./model
+
+          # Add model files to git and commit (this makes the repo clean)
+          git add model/
+          git config user.email "tira@ci.local"
+          git config user.name "tira-ci"
+          git commit -m "Add model weights for submission" || echo "No changes to commit"
+
+          # Verify clean state
+          git status --porcelain
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "ERROR: Git repository is not clean after commit"
+            exit 1
+          fi
+          echo "Repository is clean and ready."
 
       - name: Build, test, and upload image
         run: |
           tira-cli login --token ${{ secrets.TIRA_CLIENT_TOKEN }}
-          tira-cli verify-installation --task generative-ai-authorship-verification-panclef-2026 --team Yi_hao || true
+          tira-cli verify-installation \
+            --task generative-ai-authorship-verification-panclef-2026 \
+            --team Yi_hao || true
           tira-cli code-submission \
-            --path ${{ inputs.directory }} \
+            --path /tmp/submission \
             --task generative-ai-authorship-verification-panclef-2026 \
             --dataset pan26-generative-ai-detection-smoke-test-20260330-training
