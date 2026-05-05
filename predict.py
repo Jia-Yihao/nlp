@@ -98,8 +98,8 @@ def load_model():
             print("[MODEL] ⚠️ Local model load failed:", e)
 
     print(f"[MODEL] Downloading model from HuggingFace: {HF_REPO}")
-    tokenizer = AutoTokenizer.from_pretrained(HF_REPO)
-    model = AutoModelForSequenceClassification.from_pretrained(HF_REPO)
+    tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True)
+    model = AutoModelForSequenceClassification.from_pretrained(model_dir, local_files_only=True)
     model.to(device)
     model.eval()
 
