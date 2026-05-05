@@ -12,16 +12,17 @@ jobs:
     timeout-minutes: 1024
     steps:
       - name: Checkout
-        uses: actions/checkout@v4  # 升级到 v4
-        with:
-          lfs: true  # 启用 Git LFS
+        uses: actions/checkout@v4
+        # 不再需要 LFS，因为模型从 Hugging Face 下载
+        # 删除 lfs: true
         
-      - name: Verify LFS files
-        run: |
-          git lfs install
-          git lfs pull
-          ls -lh model/model.safetensors
-          file model/model.safetensors
+      # 删除或注释掉 Verify LFS files 这个步骤
+      # - name: Verify LFS files
+      #   run: |
+      #     git lfs install
+      #     git lfs pull
+      #     ls -lh model/model.safetensors
+      #     file model/model.safetensors
           
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
@@ -43,7 +44,6 @@ jobs:
         run: |
           tira-cli login --token ${{ secrets.TIRA_CLIENT_TOKEN }}
           tira-cli verify-installation --task generative-ai-authorship-verification-panclef-2026 --team Yi_hao || true
-          # 🔥 修正：dataset 参数只包含数据集名称，不包含任务路径
           tira-cli code-submission \
             --path ${{ inputs.directory }} \
             --task generative-ai-authorship-verification-panclef-2026 \
