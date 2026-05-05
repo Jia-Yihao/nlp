@@ -37,26 +37,30 @@ jobs:
               local_dir_use_symlinks=False
           )
           "
-          echo '=== /tmp/hf_model files ==='
-          ls -lh /tmp/hf_model
           ls -lh /tmp/hf_model/model.safetensors
 
-      - name: Prepare clean submission directory
+      - name: Prepare submission directory (new git repo)
         run: |
           rm -rf /tmp/submission
           mkdir -p /tmp/submission
-          cp -r ./* /tmp/submission/
 
-          # overwrite model folder with downloaded one
+          # copy repository files but not .git
+          rsync -av --exclude='.git' ./ /tmp/submission/
+
+          # inject model
           rm -rf /tmp/submission/model
           cp -r /tmp/hf_model /tmp/submission/model
 
-          echo '=== submission model dir ==='
-          ls -lh /tmp/submission/model
-          ls -lh /tmp/submission/model/model.safetensors
+          cd /tmp/submission
+          git init
+          git config user.email "tira@ci.local"
+          git config user.name "tira-ci"
+          git add .
+          git commit -m "submission"
 
-          echo '=== git status (must be clean) ==='
-          git status --porcelain
+          echo "=== submission repo status ==="
+          git status
+          ls -lh model/model.safetensors
 
       - name: Build, test, and upload image
         run: |
