@@ -7,53 +7,27 @@ import os
 from pathlib import Path
 
 def main():
-    # ====================== TIRA 标准路径 ======================
-    input_path = '/input'
-    output_dir = '/output'
+    # ====================== 解析命令行参数 ======================
+    if len(sys.argv) != 3:
+        print("错误：需要两个参数")
+        print("用法: python predict.py <input_file> <output_dir>")
+        sys.exit(1)
     
-    print(f"📂 使用 TIRA 标准路径：输入={input_path}, 输出={output_dir}")
+    input_file = sys.argv[1]   # 输入文件路径（如 /input/dataset.jsonl）
+    output_dir = sys.argv[2]    # 输出目录路径（如 /output）
     
-    # 检查输入目录
-    if not os.path.exists(input_path):
-        print(f"⚠️ {input_path} 不存在，尝试当前目录")
-        input_path = '.'
+    print(f"📂 输入文件: {input_file}")
+    print(f"📁 输出目录: {output_dir}")
+    
+    # 检查输入文件是否存在
+    if not os.path.exists(input_file):
+        raise FileNotFoundError(f"输入文件不存在: {input_file}")
     
     # 确保输出目录存在
     os.makedirs(output_dir, exist_ok=True)
     
-    # ====================== 查找输入文件（只查找 .jsonl） ======================
-    input_files = []
-    input_path_obj = Path(input_path)
-    
-    if input_path_obj.is_file() and input_path_obj.suffix == '.jsonl':
-        input_files = [input_path_obj]
-    elif input_path_obj.is_dir():
-        # 只查找 .jsonl 文件
-        input_files = list(input_path_obj.glob("*.jsonl"))
-    
-    # ====================== 如果没有输入文件，创建模拟输出（用于测试） ======================
-    if not input_files:
-        print(f"⚠️ 在 {input_path} 中找不到 .jsonl 文件")
-        if os.path.exists(input_path):
-            all_files = list(Path(input_path).iterdir())
-            print(f"目录内容: {[f.name for f in all_files]}")
-        
-        # 创建模拟输出文件，使用 TIRA 期望的名称
-        # TIRA 通常期望输出文件名与输入文件名相同或包含 original
-        mock_output = Path(output_dir) / "predictions.jsonl"
-        with open(mock_output, 'w', encoding='utf-8') as f:
-            # 写入一个示例预测
-            f.write('{"id": "test_document_1", "label": 0.5}\n')
-            f.write('{"id": "test_document_2", "label": 0.5}\n')
-        print(f"✅ 创建模拟输出: {mock_output}")
-        print("🎉 测试模式完成（无输入数据）")
-        
-        # 验证输出文件已创建
-        output_files = list(Path(output_dir).glob("*.jsonl"))
-        print(f"📂 输出目录内容: {[f.name for f in output_files]}")
-        return  # 直接返回，不进行模型加载和预测
-    
-    print(f"📂 找到 {len(input_files)} 个输入文件: {[f.name for f in input_files]}")
+    # 输出文件路径（必须是单个 .jsonl 文件）
+    output_file = Path(output_dir) / "predictions.jsonl"
     
     # ====================== 加载模型 ======================
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -62,111 +36,73 @@ def main():
     if not os.path.exists(model_dir):
         raise FileNotFoundError(f"模型目录不存在: {model_dir}")
     
-    # 检查模型文件（忽略大文件警告）
-    model_files = list(Path(model_dir).glob("*.safetensors")) + list(Path(model_dir).glob("*.bin"))
-    print(f"📁 模型目录包含: {[f.name for f in Path(model_dir).iterdir()]}")
+    print("✅ Loading model...")
+    tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True)
+    model = AutoModelForSequenceClassification.from_pretrained(model_dir, local_files_only=True)
+    model.eval()
     
-    if not model_files:
-        raise FileNotFoundError(f"在 {model_dir} 中找不到模型文件 (.safetensors 或 .bin)")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    print(f"📱 Device: {device}")
     
-    print(f"✅ 找到模型文件: {[f.name for f in model_files]}")
+    # ====================== 处理输入文件 ======================
+    print(f"🔧 处理: {input_file}")
     
-    try:
-        print("✅ Loading tokenizer...")
-        tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True)
+    with open(input_file, 'r', encoding='utf-8') as f_in, \
+         open(output_file, 'w', encoding='utf-8') as f_out:
         
-        print("✅ Loading model...")
-        # 尝试使用 safetensors，如果失败则使用 PyTorch 格式
-        try:
-            model = AutoModelForSequenceClassification.from_pretrained(
-                model_dir, 
-                local_files_only=True,
-                use_safetensors=True
-            )
-        except Exception as e:
-            print(f"⚠️ Safetensors 加载失败: {e}")
-            print("尝试使用 PyTorch 格式加载...")
-            model = AutoModelForSequenceClassification.from_pretrained(
-                model_dir, 
-                local_files_only=True,
-                use_safetensors=False
-            )
-        
-        model.eval()
-        
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.to(device)
-        print(f"📱 Device: {device}")
-        
-    except Exception as e:
-        print(f"❌ 模型加载失败: {e}")
-        print("请检查模型文件是否完整")
-        raise
-
-    # ====================== 处理每个输入文件 ======================
-    total_predictions = 0
-    
-    for input_file in input_files:
-        # 使用多种输出文件名格式，确保 TIRA 能识别
-        output_file = Path(output_dir) / "predictions.jsonl"
-        
-        print(f"🔧 处理: {input_file.name} -> {output_file.name}")
-        
-        with open(input_file, 'r', encoding='utf-8') as f_in, \
-             open(output_file, 'w', encoding='utf-8') as f_out:
-            
-            for line_num, line in enumerate(f_in, 1):
-                if not line.strip():
-                    continue
-                    
-                try:
-                    data = json.loads(line.strip())
-                    text_id = data.get("id", f"line_{line_num}")
-                    text = data.get("text", "")
-                    
-                    if not text:
-                        print(f"⚠️ 行 {line_num}: 缺少 text 字段")
-                        ai_prob = 0.5
-                    else:
-                        inputs = tokenizer(
-                            text, 
-                            return_tensors="pt", 
-                            truncation=True, 
-                            max_length=512,
-                            padding=False
-                        )
-                        inputs = {k: v.to(device) for k, v in inputs.items()}
-                        
-                        with torch.no_grad():
-                            outputs = model(**inputs)
-                            logits = outputs.logits
-                            
-                        probabilities = F.softmax(logits, dim=-1)
-                        ai_prob = probabilities[0][1].item()
-                        
-                        # 0.5 弃权机制
-                        if 0.40 <= ai_prob <= 0.60:
-                            ai_prob = 0.5
-                        
-                except json.JSONDecodeError as e:
-                    print(f"⚠️ 行 {line_num} JSON 解析错误: {e}")
-                    ai_prob = 0.5
-                except Exception as e:
-                    print(f"⚠️ 行 {line_num} 处理错误: {e}")
-                    ai_prob = 0.5
+        for line_num, line in enumerate(f_in, 1):
+            if not line.strip():
+                continue
                 
-                result = {"id": text_id, "label": round(ai_prob, 4)}
-                f_out.write(json.dumps(result, ensure_ascii=False) + '\n')
-                total_predictions += 1
+            try:
+                data = json.loads(line.strip())
+                text_id = data.get("id")
+                text = data.get("text", "")
+                
+                if not text_id:
+                    print(f"⚠️ 行 {line_num}: 缺少 id 字段")
+                    continue
+                
+                if not text:
+                    print(f"⚠️ 行 {line_num}: text 为空，使用弃权")
+                    ai_prob = 0.5
+                else:
+                    # 处理输入
+                    inputs = tokenizer(
+                        text, 
+                        return_tensors="pt", 
+                        truncation=True, 
+                        max_length=512,
+                        padding=False
+                    )
+                    inputs = {k: v.to(device) for k, v in inputs.items()}
+                    
+                    with torch.no_grad():
+                        outputs = model(**inputs)
+                        logits = outputs.logits
+                        
+                    probabilities = F.softmax(logits, dim=-1)
+                    ai_prob = probabilities[0][1].item()
+                    
+                    # 弃权机制：不确定时回答 0.5
+                    if 0.40 <= ai_prob <= 0.60:
+                        ai_prob = 0.5
+                    
+            except json.JSONDecodeError as e:
+                print(f"⚠️ 行 {line_num} JSON 解析错误: {e}")
+                ai_prob = 0.5
+            except Exception as e:
+                print(f"⚠️ 行 {line_num} 处理错误: {e}")
+                ai_prob = 0.5
             
-            print(f"✅ 完成: {output_file.name} (处理了 {line_num} 行)")
+            # 确保分数在 [0, 1] 范围内
+            ai_prob = max(0.0, min(1.0, ai_prob))
+            
+            result = {"id": text_id, "label": round(ai_prob, 4)}
+            f_out.write(json.dumps(result) + '\n')
     
-    print(f"🎉 所有预测完成！结果保存在: {output_dir}")
-    print(f"📊 总共处理了 {total_predictions} 条预测")
-    
-    # 列出输出文件供调试
-    output_files = list(Path(output_dir).glob("*.jsonl"))
-    print(f"📂 输出文件: {[f.name for f in output_files]}")
+    print(f"✅ 预测完成！结果保存在: {output_file}")
 
 if __name__ == "__main__":
     main()
