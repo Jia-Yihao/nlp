@@ -75,26 +75,45 @@ def smoke_test_predict():
 
 
 def load_model():
+    """
+    优先尝试本地模型，失败则从 Hugging Face 下载
+    """
     import torch
     from transformers import AutoTokenizer, AutoModelForSequenceClassification
-
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # 你的 Hugging Face 仓库
+    HF_REPO = "Yihao-Jia/eist"
+    
+    # 本地模型目录
     model_dir = Path(__file__).parent / "model"
-    print("Model dir:", model_dir)
-
+    
+    # 尝试本地加载
     if model_dir.exists():
         try:
-            print("Model dir files:", os.listdir(model_dir))
+            print(f"📁 Trying local model: {model_dir}")
+            tokenizer = AutoTokenizer.from_pretrained(model_dir)
+            model = AutoModelForSequenceClassification.from_pretrained(model_dir)
+            model.to(device)
+            model.eval()
+            print("✅ Loaded local model successfully")
+            return tokenizer, model, device
         except Exception as e:
-            print("[WARN] Cannot list model dir:", e)
-
-    tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True)
-    model = AutoModelForSequenceClassification.from_pretrained(model_dir, local_files_only=True)
-    model.eval()
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-
-    return tokenizer, model, device
+            print(f"⚠️ Local model load failed: {e}")
+    
+    # 从 Hugging Face 下载
+    print(f"📥 Downloading model from Hugging Face: {HF_REPO}")
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(HF_REPO)
+        model = AutoModelForSequenceClassification.from_pretrained(HF_REPO)
+        model.to(device)
+        model.eval()
+        print("✅ Loaded Hugging Face model successfully")
+        return tokenizer, model, device
+    except Exception as e:
+        print(f"❌ Failed to load model from Hugging Face: {e}")
+        raise
 
 
 def predict_file(input_file: str, output_dir: str):
@@ -103,33 +122,57 @@ def predict_file(input_file: str, output_dir: str):
 
     try:
         import torch
-
+        
         tokenizer, model, device = load_model()
 
-        with open(input_file, "r", encoding="utf-8") as f_in, open(output_file, "w", encoding="utf-8") as f_out:
-            for line in f_in:
+        with open(input_file, "r", encoding="utf-8") as f_in, \
+             open(output_file, "w", encoding="utf-8") as f_out:
+            
+            for line_num, line in enumerate(f_in, 1):
                 if not line.strip():
                     continue
 
-                data = json.loads(line)
-                text = data.get("text", "")
+                try:
+                    data = json.loads(line)
+                    text_id = data.get("id")
+                    text = data.get("text", "")
 
-                if not text:
-                    prob = 0.5
-                else:
-                    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
-                    inputs = {k: v.to(device) for k, v in inputs.items()}
+                    if not text_id:
+                        print(f"⚠️ Line {line_num}: missing id field")
+                        continue
 
-                    with torch.no_grad():
-                        logits = model(**inputs).logits
-
-                    prob = torch.softmax(logits, dim=-1)[0][1].item()
-
-                    if 0.40 <= prob <= 0.60:
+                    if not text:
                         prob = 0.5
+                    else:
+                        inputs = tokenizer(
+                            text, 
+                            return_tensors="pt", 
+                            truncation=True, 
+                            max_length=512,
+                            padding=False
+                        )
+                        inputs = {k: v.to(device) for k, v in inputs.items()}
 
-                result = {"id": data["id"], "label": round(prob, 4)}
-                f_out.write(json.dumps(result, ensure_ascii=False) + "\n")
+                        with torch.no_grad():
+                            logits = model(**inputs).logits
+
+                        prob = torch.softmax(logits, dim=-1)[0][1].item()
+
+                        # 弃权机制
+                        if 0.40 <= prob <= 0.60:
+                            prob = 0.5
+
+                    result = {"id": text_id, "label": round(prob, 4)}
+                    f_out.write(json.dumps(result, ensure_ascii=False) + "\n")
+                    
+                except json.JSONDecodeError as e:
+                    print(f"⚠️ Line {line_num}: JSON decode error: {e}")
+                    continue
+                except Exception as e:
+                    print(f"⚠️ Line {line_num}: processing error: {e}")
+                    # 出错时输出 0.5
+                    result = {"id": data.get("id", f"line_{line_num}"), "label": 0.5}
+                    f_out.write(json.dumps(result, ensure_ascii=False) + "\n")
 
         print(f"✅ Prediction finished: {output_file}")
         return 0
@@ -137,13 +180,19 @@ def predict_file(input_file: str, output_dir: str):
     except Exception as e:
         print(f"⚠️ Model inference failed, fallback to constant 0.5. Reason: {e}")
 
-        with open(input_file, "r", encoding="utf-8") as f_in, open(output_file, "w", encoding="utf-8") as f_out:
+        # 备用模式：全部输出 0.5
+        with open(input_file, "r", encoding="utf-8") as f_in, \
+             open(output_file, "w", encoding="utf-8") as f_out:
+            
             for line in f_in:
                 if not line.strip():
                     continue
-                data = json.loads(line)
-                result = {"id": data["id"], "label": 0.5}
-                f_out.write(json.dumps(result, ensure_ascii=False) + "\n")
+                try:
+                    data = json.loads(line)
+                    result = {"id": data.get("id", "unknown"), "label": 0.5}
+                    f_out.write(json.dumps(result, ensure_ascii=False) + "\n")
+                except:
+                    pass
 
         print(f"✅ Fallback output written: {output_file}")
         return 0
