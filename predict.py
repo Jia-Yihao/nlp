@@ -6,9 +6,6 @@ import argparse
 from pathlib import Path
 
 
-HF_REPO = "Yihao-Jia/eist"
-
-
 def write_jsonl(output_path: Path, rows):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
@@ -71,50 +68,52 @@ def smoke_test_predict():
 
 def load_model():
     """
-    Load from local ./model first; otherwise download from HuggingFace.
+    Load model from local ./model/ directory (pre-downloaded during Docker build).
     """
     import torch
     from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-    # important: cache in writable directory
+    # Set cache to writable directory (safe for container)
     os.environ.setdefault("HF_HOME", "/tmp/hf_home")
     os.environ.setdefault("TRANSFORMERS_CACHE", "/tmp/hf_cache")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    local_model_dir = Path(__file__).parent / "model"
+    # The model is expected to be in /app/model (copy from build stage)
+    model_dir = Path(__file__).parent / "model"
 
-    if local_model_dir.exists():
-        try:
-            print(f"[MODEL] Trying local model: {local_model_dir}")
-            tokenizer = AutoTokenizer.from_pretrained(local_model_dir)
-            model = AutoModelForSequenceClassification.from_pretrained(local_model_dir)
-            model.to(device)
-            model.eval()
-            print("[MODEL] ✅ Loaded local model")
-            print("[MODEL] num_labels =", getattr(model.config, "num_labels", None))
-            return tokenizer, model, device
-        except Exception as e:
-            print("[MODEL] ⚠️ Local model load failed:", e)
+    if not model_dir.exists():
+        raise RuntimeError(f"Model directory not found: {model_dir}. "
+                           "Please ensure the model is downloaded during Docker build.")
 
-    print(f"[MODEL] Downloading model from HuggingFace: {HF_REPO}")
-    tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True)
-    model = AutoModelForSequenceClassification.from_pretrained(model_dir, local_files_only=True)
-    model.to(device)
-    model.eval()
+    print(f"[MODEL] Loading model from {model_dir}")
+    # List model files for debugging
+    try:
+        files = os.listdir(model_dir)
+        print(f"[MODEL] Files in model dir: {files}")
+        safetensors = [f for f in files if f.endswith(".safetensors")]
+        if safetensors:
+            size = os.path.getsize(model_dir / safetensors[0])
+            print(f"[MODEL] {safetensors[0]} size = {size} bytes")
+    except Exception as e:
+        print(f"[MODEL] Warning: could not list model dir: {e}")
 
-    print("[MODEL] ✅ Loaded HF model")
-    print("[MODEL] num_labels =", getattr(model.config, "num_labels", None))
-    print("[MODEL] id2label =", getattr(model.config, "id2label", None))
-    print("[MODEL] label2id =", getattr(model.config, "label2id", None))
-
-    return tokenizer, model, device
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_dir)
+        model = AutoModelForSequenceClassification.from_pretrained(model_dir)
+        model.to(device)
+        model.eval()
+        print("[MODEL] ✅ Loaded local model successfully")
+        print(f"[MODEL] num_labels = {getattr(model.config, 'num_labels', None)}")
+        print(f"[MODEL] id2label = {getattr(model.config, 'id2label', None)}")
+        return tokenizer, model, device
+    except Exception as e:
+        raise RuntimeError(f"Failed to load model from {model_dir}: {e}")
 
 
 def logits_to_prob(logits):
     """
-    Convert logits to probability of class 1 (AI probability by default).
-
+    Convert logits to probability of class 1 (AI probability).
     Supports:
       logits shape [B,2] -> softmax
       logits shape [B,1] -> sigmoid
@@ -179,6 +178,7 @@ def predict_file(input_file: str, output_dir: str, batch_size: int = 16):
         empty_mask = [len(t.strip()) == 0 for t in texts]
         empty_cnt += sum(empty_mask)
 
+        # Replace empty texts with a single space to avoid tokenizer issues
         safe_texts = [t if len(t.strip()) > 0 else " " for t in texts]
 
         inputs = tokenizer(
@@ -211,11 +211,9 @@ def predict_file(input_file: str, output_dir: str, batch_size: int = 16):
                 prob = 0.5
             else:
                 prob = float(prob)
-
-                # flip if needed
                 if flip_label:
                     prob = 1.0 - prob
-
+                # Clamp
                 if prob < 0.0:
                     prob = 0.0
                 if prob > 1.0:
@@ -253,14 +251,24 @@ def main():
         return smoke_test_predict()
 
     print(f"[MAIN] Run mode: input={input_file}, output={output_dir}")
-    
+
+    # Debug: check model directory
     model_dir = Path(__file__).parent / "model"
     print("[CHECK] model_dir =", model_dir)
     print("[CHECK] model_dir exists =", model_dir.exists())
-    print("[CHECK] model_dir files =", os.listdir(model_dir))
-    print("[CHECK] safetensors exists =", (model_dir / "model.safetensors").exists())
-    print("[CHECK] safetensors size =", (model_dir / "model.safetensors").stat().st_size)
-   
+    if model_dir.exists():
+        try:
+            files = os.listdir(model_dir)
+            print("[CHECK] model_dir files =", files)
+            safetensors = [f for f in files if f.endswith(".safetensors")]
+            if safetensors:
+                size = (model_dir / safetensors[0]).stat().st_size
+                print(f"[CHECK] {safetensors[0]} size = {size} bytes")
+            else:
+                print("[CHECK] No .safetensors file found")
+        except Exception as e:
+            print(f"[CHECK] Error listing model_dir: {e}")
+
     if not os.path.exists(input_file):
         print(f"⚠️ Input file not found: {input_file}, writing placeholder.")
         out_file = Path(output_dir) / "predictions.jsonl"
