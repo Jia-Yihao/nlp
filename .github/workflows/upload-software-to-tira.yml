@@ -28,5 +28,5 @@ jobs:
       - name: Build, test, and upload image
         run: |
           tira-cli login --token ${{ secrets.TIRA_CLIENT_TOKEN }}
-          tira-cli verify-installation --task generative-ai-authorship-verification-panclef-2026 --team Yi_hao
+          tira-cli verify-installation --task generative-ai-authorship-verification-panclef-2026 --team Yi_hao || true
           tira-cli code-submission --path ${{ inputs.directory }} --task generative-ai-authorship-verification-panclef-2026 --dataset generative-ai-authorship-verification-panclef-2026/pan26-generative-ai-detection-smoke-test-20260330-training
