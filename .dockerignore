@@ -1,11 +1,1 @@
-# 忽略测试数据
-test_input.jsonl
-test_output/
 
-# 忽略你截图里提到的训练过程中的旧备份（我们只需要最终的 safetensors）
-model/checkpoint-18968
-model/checkpoint-33194
-
-# 忽略 python 缓存
-__pycache__
-*.pyc
