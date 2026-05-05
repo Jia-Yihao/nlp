@@ -17,17 +17,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Dependencies
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
-      - name: Install required python packages
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install tira huggingface_hub
+          pip install huggingface_hub tira
 
-      - name: Download HuggingFace model (outside repo)
+      - name: Download model from Hugging Face (outside repo)
         run: |
           python -c "
           from huggingface_hub import snapshot_download
@@ -39,15 +39,15 @@ jobs:
           "
           ls -lh /tmp/hf_model/model.safetensors
 
-      - name: Prepare submission directory (new git repo)
+      - name: Prepare clean submission directory
         run: |
           rm -rf /tmp/submission
           mkdir -p /tmp/submission
 
-          # copy repository files but not .git
+          # Copy all repository files (excluding .git)
           rsync -av --exclude='.git' ./ /tmp/submission/
 
-          # inject model
+          # Inject the downloaded model
           rm -rf /tmp/submission/model
           cp -r /tmp/hf_model /tmp/submission/model
 
@@ -56,13 +56,12 @@ jobs:
           git config user.email "tira@ci.local"
           git config user.name "tira-ci"
           git add .
-          git commit -m "submission"
+          git commit -m "submission with model"
 
-          echo "=== submission repo status ==="
-          git status
-          ls -lh model/model.safetensors
+          echo "=== Submission summary ==="
+          ls -lh /tmp/submission/model/model.safetensors
 
-      - name: Build, test, and upload image
+      - name: Build and upload to TIRA
         run: |
           tira-cli login --token ${{ secrets.TIRA_CLIENT_TOKEN }}
           tira-cli verify-installation --task generative-ai-authorship-verification-panclef-2026 --team Yi_hao || true
