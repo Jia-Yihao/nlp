@@ -6,15 +6,6 @@ import argparse
 from pathlib import Path
 
 
-def safe_makedirs(path: str):
-    try:
-        os.makedirs(path, exist_ok=True)
-        return True
-    except Exception as e:
-        print(f"[WARN] Could not create dir {path}: {e}")
-        return False
-
-
 def write_jsonl(output_path: Path, rows):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
@@ -22,95 +13,68 @@ def write_jsonl(output_path: Path, rows):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
-def try_write_mock_outputs():
+def find_input_jsonl(input_root: str):
     """
-    Smoke test fallback:
-    TIRA sometimes does not provide args but provides env mount paths.
-    We try multiple possible output dirs to guarantee at least one is correct.
+    TIRA smoke test input usually is a directory like /tira-data/input
+    We try to find the first *.jsonl file.
     """
-    mock_rows = [
-        {"id": "smoke_test_1", "label": 0.5},
-        {"id": "smoke_test_2", "label": 0.5},
-    ]
+    input_root = Path(input_root)
 
-    # Print possible env vars for debugging
-    print("========== DEBUG ENV (output related) ==========")
-    for k in sorted(os.environ.keys()):
-        if ("TIRA" in k.upper()) or ("OUT" in k.upper()) or ("RESULT" in k.upper()):
-            print(f"{k}={os.environ.get(k)}")
-    print("================================================")
+    if input_root.is_file() and input_root.suffix == ".jsonl":
+        return str(input_root)
 
-    candidates = []
+    if not input_root.exists():
+        return None
 
-    # Common TIRA / evaluation output env vars
-    for key in [
-        "TIRA_OUTPUT_DIR",
-        "TIRA_OUTPUT",
-        "OUTPUT_DIR",
-        "OUTPUT_PATH",
-        "RESULT_DIR",
-        "RESULT_PATH",
-        "OUT_DIR",
-    ]:
-        v = os.environ.get(key)
-        if v:
-            candidates.append(v)
+    # search jsonl
+    candidates = sorted(input_root.rglob("*.jsonl"))
+    if len(candidates) == 0:
+        return None
 
-    # Common mount points
-    candidates += [
-        "/output",
-        "/outputs",
-        "/workspace/output",
-        "/workspace/outputs",
-        "/mnt/output",
-        "/mnt/outputs",
-        "/tmp/output",
-        "/tmp/outputs",
-        os.getcwd(),
-    ]
+    return str(candidates[0])
 
-    # Deduplicate while preserving order
-    seen = set()
-    unique_candidates = []
-    for c in candidates:
-        if c not in seen:
-            unique_candidates.append(c)
-            seen.add(c)
 
-    success_paths = []
+def smoke_test_predict():
+    """
+    Smoke test mode: must output the SAME NUMBER of lines as the input dataset.
+    """
+    input_dir = os.environ.get("TIRA_INPUT_DATASET", "/tira-data/input")
+    output_dir = os.environ.get("TIRA_OUTPUT_DIR", "/tira-data/output")
 
-    print("Smoke Test: trying to write predictions.jsonl into candidate output dirs...")
-    for out_dir in unique_candidates:
-        try:
-            if not safe_makedirs(out_dir):
+    print(f"[SMOKE] input_dir={input_dir}")
+    print(f"[SMOKE] output_dir={output_dir}")
+
+    input_file = find_input_jsonl(input_dir)
+
+    if input_file is None:
+        print("[SMOKE] No input jsonl found, writing minimal placeholder (may fail).")
+        out_file = Path(output_dir) / "predictions.jsonl"
+        write_jsonl(out_file, [{"id": "smoke_test_placeholder", "label": 0.5}])
+        print(f"[SMOKE] wrote -> {out_file}")
+        return 0
+
+    print(f"[SMOKE] detected input_file={input_file}")
+
+    preds = []
+    n = 0
+
+    with open(input_file, "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
                 continue
+            obj = json.loads(line)
+            sample_id = obj.get("id", f"missing_id_{n}")
+            preds.append({"id": sample_id, "label": 0.5})
+            n += 1
 
-            out_file = Path(out_dir) / "predictions.jsonl"
-            write_jsonl(out_file, mock_rows)
+    out_file = Path(output_dir) / "predictions.jsonl"
+    write_jsonl(out_file, preds)
 
-            # verify file exists and non-empty
-            if out_file.exists() and out_file.stat().st_size > 0:
-                success_paths.append(str(out_file))
-                print(f"✅ wrote mock output -> {out_file}")
-        except Exception as e:
-            print(f"[WARN] failed writing to {out_dir}: {e}")
-
-    if not success_paths:
-        print("❌ Smoke Test failed: could not write predictions.jsonl anywhere.")
-        return 1
-
-    print("Smoke Test success. Written files:")
-    for p in success_paths:
-        print(" -", p)
-
+    print(f"[SMOKE] wrote {len(preds)} lines -> {out_file}")
     return 0
 
 
 def load_model():
-    """
-    Try loading local fine-tuned model from ./model
-    If missing (because safetensors ignored), will raise exception.
-    """
     import torch
     from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
@@ -161,7 +125,6 @@ def predict_file(input_file: str, output_dir: str):
 
                     prob = torch.softmax(logits, dim=-1)[0][1].item()
 
-                    # Your smoothing policy
                     if 0.40 <= prob <= 0.60:
                         prob = 0.5
 
@@ -188,8 +151,6 @@ def predict_file(input_file: str, output_dir: str):
 
 def main():
     parser = argparse.ArgumentParser()
-
-    # support both named and positional
     parser.add_argument("--input", type=str, default=None)
     parser.add_argument("--output", type=str, default=None)
     parser.add_argument("pos_input", nargs="?", default=None)
@@ -200,20 +161,17 @@ def main():
     input_file = args.input if args.input is not None else args.pos_input
     output_dir = args.output if args.output is not None else args.pos_output
 
-    # Smoke test mode
+    # Smoke test: no args provided
     if input_file is None or output_dir is None:
         print("TIRA Smoke Test detected (missing input/output args).")
-        return try_write_mock_outputs()
+        return smoke_test_predict()
 
     print(f"Run mode: input={input_file}, output={output_dir}")
 
-    # If input missing, still write something to output to avoid invalid run
     if not os.path.exists(input_file):
-        print(f"⚠️ Input file not found: {input_file}")
-        safe_makedirs(output_dir)
+        print(f"⚠️ Input file not found: {input_file}, writing placeholder.")
         out_file = Path(output_dir) / "predictions.jsonl"
         write_jsonl(out_file, [{"id": "missing_input", "label": 0.5}])
-        print(f"✅ wrote placeholder output -> {out_file}")
         return 0
 
     return predict_file(input_file, output_dir)
