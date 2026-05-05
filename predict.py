@@ -125,6 +125,27 @@ def predict_file(input_file: str, output_dir: str):
         
         tokenizer, model, device = load_model()
 
+        # ------------------ 诊断信息 ------------------
+        print("\n=== Model Diagnostic ===")
+        # 打印分类头的前5个权重（如果存在）
+        if hasattr(model, 'classifier') and hasattr(model.classifier, 'weight'):
+            print(f"Classifier weight sample: {model.classifier.weight[0][:5]}")
+        elif hasattr(model, 'score') and hasattr(model.score, 'weight'):
+            print(f"Score weight sample: {model.score.weight[0][:5]}")
+        else:
+            print("Could not find classifier/score weights")
+        
+        # 用空文本测试模型输出
+        test_input = tokenizer("test", return_tensors="pt")
+        test_input = {k: v.to(device) for k, v in test_input.items()}
+        with torch.no_grad():
+            test_logits = model(**test_input).logits
+        test_probs = torch.softmax(test_logits, dim=-1)[0]
+        print(f"Dummy test logits: {test_logits}")
+        print(f"Dummy test probs: {test_probs}")
+        print("========================\n")
+        # ---------------------------------------------
+
         with open(input_file, "r", encoding="utf-8") as f_in, \
              open(output_file, "w", encoding="utf-8") as f_out:
             
@@ -157,10 +178,13 @@ def predict_file(input_file: str, output_dir: str):
                             logits = model(**inputs).logits
 
                         prob = torch.softmax(logits, dim=-1)[0][1].item()
+                        # 打印前几个样本的原始概率，便于调试
+                        if line_num <= 3:
+                            print(f"Sample {line_num}: logits={logits}, prob={prob}")
 
-                        # 弃权机制
-                        if 0.40 <= prob <= 0.60:
-                            prob = 0.5
+                        # 弃权机制暂时注释，直接使用原始概率
+                        # if 0.40 <= prob <= 0.60:
+                        #     prob = 0.5
 
                     result = {"id": text_id, "label": round(prob, 4)}
                     f_out.write(json.dumps(result, ensure_ascii=False) + "\n")
@@ -171,14 +195,19 @@ def predict_file(input_file: str, output_dir: str):
                 except Exception as e:
                     print(f"⚠️ Line {line_num}: processing error: {e}")
                     # 出错时输出 0.5
-                    result = {"id": data.get("id", f"line_{line_num}"), "label": 0.5}
-                    f_out.write(json.dumps(result, ensure_ascii=False) + "\n")
+                    try:
+                        result = {"id": data.get("id", f"line_{line_num}"), "label": 0.5}
+                        f_out.write(json.dumps(result, ensure_ascii=False) + "\n")
+                    except:
+                        pass
 
         print(f"✅ Prediction finished: {output_file}")
         return 0
 
     except Exception as e:
         print(f"⚠️ Model inference failed, fallback to constant 0.5. Reason: {e}")
+        import traceback
+        traceback.print_exc()
 
         # 备用模式：全部输出 0.5
         with open(input_file, "r", encoding="utf-8") as f_in, \
