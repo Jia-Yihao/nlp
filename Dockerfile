@@ -5,7 +5,6 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 安装系统依赖（包括 git-lfs，部分模型下载可能需要）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
@@ -16,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 在构建阶段下载模型到 /app/model
+# 在构建时下载模型到 /app/model
 RUN python -c "\
 from transformers import AutoTokenizer, AutoModelForSequenceClassification; \
 model_name = 'Yihao-Jia/eist'; \
