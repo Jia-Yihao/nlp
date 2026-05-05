@@ -12,16 +12,16 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # 升级到 v4
         with:
-          lfs: true  # 🔥 添加这一行 - 启用 Git LFS
+          lfs: true  # 启用 Git LFS
         
-      - name: Verify LFS files (调试)
+      - name: Verify LFS files
         run: |
           git lfs install
           git lfs pull
-          ls -lh model/model.safetensors  # 检查文件大小
-          file model/model.safetensors     # 检查文件类型
+          ls -lh model/model.safetensors
+          file model/model.safetensors
           
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
@@ -43,4 +43,8 @@ jobs:
         run: |
           tira-cli login --token ${{ secrets.TIRA_CLIENT_TOKEN }}
           tira-cli verify-installation --task generative-ai-authorship-verification-panclef-2026 --team Yi_hao || true
-          tira-cli code-submission --path ${{ inputs.directory }} --task generative-ai-authorship-verification-panclef-2026 --dataset generative-ai-authorship-verification-panclef-2026/pan26-generative-ai-detection-smoke-test-20260330-training
+          # 🔥 修正：dataset 参数只包含数据集名称，不包含任务路径
+          tira-cli code-submission \
+            --path ${{ inputs.directory }} \
+            --task generative-ai-authorship-verification-panclef-2026 \
+            --dataset pan26-generative-ai-detection-smoke-test-20260330-training
